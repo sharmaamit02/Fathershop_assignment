@@ -1,0 +1,559 @@
+Develop Terraform scripts to define the entire infrastructure, following best practices for IaC. Utilize separate module files for different components to promote reusability and maintainability.
+2. Amazon EKS (Elastic Kubernetes Service) : Provision an EKS cluster that meets the requirements for hosting 1 WordPress websites. Implement necessary networking, security groups, and policies to ensure a secure and scalable Kubernetes environment.
+3. Amazon S3 : Use S3 to store states and any other config files
+4. Elasticache Memcached : Integrate Elasticache Memcached to manage PHP session data for the WordPress sites. Configure appropriate cache settings and security groups.
+5. SSL Certificates : Automate the process of obtaining SSL certificates from Let's Encrypt for each WordPress website. Ensure automated certificate renewal.
+6. Amazon RDS (Relational Database Service) : Deploy an RDS instance to host the WordPress databases. Implement appropriate security groups, backups, and maintenance settings.
+ 
+High-Level overview with Terraform scripts for the entire infrastructure
+ 
+EKS
+Provision an EKS cluster that meets the requirements for hosting 1 WordPress websites. Implement necessary networking, security groups, and policies to ensure a secure and scalable Kubernetes environment.
+ 
+EKS Module: (main.tf)
+provider "aws" {
+ region = "us-west-2"  # Change to your desired region
+}
+ 
+resource "aws_eks_cluster" "my_cluster" {
+ name     = "my-cluster"
+ role_arn = aws_iam_role.eks_role.arn
+ 
+ vpc_config {
+   subnet_ids = var.subnet_ids
+ }
+}
+ 
+resource "aws_iam_role" "eks_role" {
+ name = "eks-cluster-role"
+ 
+ assume_role_policy = jsonencode({
+   Version = "2012-10-17",
+   Statement = [
+     {
+       Action = "sts:AssumeRole",
+       Effect = "Allow",
+       Principal = {
+         Service = "eks.amazonaws.com"
+       }
+     }
+   ]
+ })
+}
+ 
+resource "aws_eks_node_group" "my_nodegroup" {
+ cluster_name    = aws_eks_cluster.my_cluster.name
+ node_group_name = "my-nodegroup"
+ node_role_arn   = aws_iam_role.eks_node_role.arn
+ 
+ scaling_config {
+   min_size = 1
+   desired_size = 2
+   max_size = 3
+ }
+ 
+ remote_access {
+   ec2_ssh_key = "your-ssh-key"
+ }
+}
+ 
+resource "aws_iam_role" "eks_node_role" {
+ name = "eks-node-role"
+ 
+ assume_role_policy = jsonencode({
+   Version = "2012-10-17",
+   Statement = [
+     {
+       Action = "sts:AssumeRole",
+       Effect = "Allow",
+       Principal = {
+         Service = "ec2.amazonaws.com"
+       }
+     }
+   ]
+ })
+}
+ 
+# Define your worker node security group, VPC, and subnets here
+# ...
+ 
+output "cluster_name" {
+ value = aws_eks_cluster.my_cluster.name
+}
+ 
+output "kubeconfig" {
+ value = aws_eks_cluster.my_cluster.kubeconfig
+}
+ 
+eks/variables.tf (Input Variables)
+variable "subnet_ids" {
+ type    = list(string)
+ description = "List of subnet IDs for the EKS cluster."
+}
+ 
+ 
+ 
+eks/outputs.tf (Output Variables):
+ 
+output "cluster_name" {
+ description = "Name of the EKS cluster."
+}
+ 
+output "kubeconfig" {
+ description = "Kubeconfig for accessing the EKS cluster."
+}
+ 
+K8s Helm for WordPress Site:
+Provisioning an EKS (Amazon Elastic Kubernetes Service) cluster for hosting a WordPress website using Helm involves several steps, including creating the EKS cluster, setting up networking, security groups, and policies, and deploying WordPress using Helm charts. Here, I'll provide an overview of the steps and provide code snippets for each step. Please note that this is a simplified example, and in a production environment, you'd need to fine-tune security and scalability settings.
+ 
+1. Prerequisites:
+Install AWS CLI, eksctl, kubectl, and Helm on your local machine.
+Configure AWS CLI with your AWS credentials.
+Create an S3 bucket for Helm charts and store the charts there.
+ 
+Create the EKS Cluster:
+eksctl create cluster --name my-wordpress-cluster --nodes 2 --node-type t2.micro --region us-west-2
+Configure kubectl to use the EKS cluster
+aws eks --region us-west-2 update-kubeconfig --name my-wordpress-cluster
+ 
+Create Networking:
+Ensure that your EKS cluster is created within a VPC with public and private subnets. You can configure this while creating the EKS cluster.
+ 
+Configure Security Groups and Policies:
+You need to set up security groups for the EKS cluster nodes and configure IAM roles for pods to access AWS services. Here's an example IAM policy for EKS worker nodes:
+{
+ "Version": "2012-10-17",
+ "Statement": [
+   {
+     "Effect": "Allow",
+     "Action": "eks:DescribeCluster",
+     "Resource": "arn:aws:eks:us-west-2:123456789012:cluster/my-wordpress-cluster"
+   }
+ ]
+}
+ 
+And a security group example:
+ 
+[
+ {
+   "ingress": [
+     {
+       "from_port": 80,
+       "to_port": 80,
+       "protocol": "tcp",
+       "cidr_blocks": ["0.0.0.0/0"]
+     }
+   ],
+   "egress": [
+     {
+       "from_port": 0,
+       "to_port": 65535,
+       "protocol": "-1",
+       "cidr_blocks": ["0.0.0.0/0"]
+     }
+   ]
+ }
+]
+ 
+Deploy WordPress using Helm
+You can use Helm to deploy WordPress and MySQL. Create a values.yaml file to configure your WordPress Helm chart:
+wordpress:
+ image:
+   tag: latest
+ service:
+   type: LoadBalancer
+ ingress:
+   enabled: true
+   hosts:
+     - wordpress.example.com
+ persistence:
+   enabled: true
+ mariadb:
+   enabled: false
+ resources:
+   limits:
+     memory: 512Mi
+     cpu: 500m
+   requests:
+     memory: 256Mi
+     cpu: 250m
+ 
+Install WordPress using Helm
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm install my-wordpress bitnami/wordpress -f values.yaml
+ 
+This Helm chart will set up WordPress with a LoadBalancer service for external access.
+ 
+Configure DNS:
+Point your domain to the LoadBalancer's DNS name.
+Remember that this is a simplified example. In a production environment, you'd need to configure SSL, set up database backups, and secure the cluster further. Consult AWS and Helm documentation for more detailed and secure configurations.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+S3
+Using Amazon S3 to store Terraform state files and other configuration files is a common practice to maintain state and share files in a secure and scalable manner. Here's an example of Terraform code to configure an S3 bucket for storing Terraform state and other configuration files:
+s3/main.tf (S3 bucket configuration)
+ 
+provider "aws" {
+ region = "us-east-1"  # Change to your desired region
+}
+ 
+resource "aws_s3_bucket" "tf_state_bucket" {
+ bucket = "my-terraform-state-bucket"  # Choose a unique bucket name
+ acl    = "private"
+ 
+ versioning {
+   enabled = true
+ }
+ 
+ lifecycle_rule {
+   enabled = true
+ 
+   noncurrent_version_expiration {
+     days = 30
+   }
+ }
+}
+ 
+resource "aws_s3_bucket_policy" "tf_state_bucket_policy" {
+ bucket = aws_s3_bucket.tf_state_bucket.id
+ 
+ policy = jsonencode({
+   Version = "2012-10-17",
+   Statement = [
+     {
+       Action = ["s3:GetObject", "s3:ListBucket"],
+       Effect = "Allow",
+       Principal = "*",
+       Resource = [
+         aws_s3_bucket.tf_state_bucket.arn,
+         "${aws_s3_bucket.tf_state_bucket.arn}/*",
+       ],
+     },
+   ],
+ })
+}
+ 
+This code creates an S3 bucket for storing Terraform state files and config files. The S3 bucket is private, has versioning enabled for state files, and includes a lifecycle rule to expire noncurrent versions after 30 days. A basic bucket policy is applied to allow read access to everyone.
+ 
+This code creates an S3 bucket for storing Terraform state files and config files. The S3 bucket is private, has versioning enabled for state files, and includes a lifecycle rule to expire noncurrent versions after 30 days. A basic bucket policy is applied to allow read access to everyone.
+s3/variables.tf and s3/outputs.tf files can be empty for this specific use case, but you can add variables and outputs if needed for your specific project requirements.
+
+Remember to configure the backend settings in your root Terraform configuration to use this S3 bucket for storing state files. For example, in your root main.tf
+
+ 
+main.tf (Root configuration with backend settings)
+ 
+provider "aws" {
+ region = "us-east-1"  # Change to your desired region
+}
+ 
+terraform {
+ backend "s3" {
+   bucket         = "my-terraform-state-bucket"  # Use the same bucket name as above
+   key            = "terraform.tfstate"
+   region         = "us-east-1"  # Change to your desired region
+   encrypt        = true
+ }
+}
+ 
+# Define your infrastructure resources here
+provider "aws" {
+ region = "us-east-1"  # Change to your desired region
+}
+ 
+terraform {
+ backend "s3" {
+   bucket         = "my-terraform-state-bucket"  # Use the same bucket name as above
+   key            = "terraform.tfstate"
+   region         = "us-east-1"  # Change to your desired region
+   encrypt        = true
+ }
+}
+ 
+# Define your infrastructure resources here
+ 
+Note: After configuring the backend, your Terraform state files will be stored in the S3 bucket, ensuring a centralized and secure location for managing your infrastructure as code.
+ 
+ 
+ 
+ElasticSearch:
+To integrate Amazon ElastiCache (Memcached) with your WordPress sites to manage PHP session data, you can use Terraform to create an ElastiCache cluster, configure cache settings, and define security groups. Here's an example of Terraform code for this:
+ 
+elasticache/main.tf (ElastiCache Memcached configuration)
+ 
+provider "aws" {
+ region = "us-west-2"  # Change to your desired region
+}
+ 
+resource "aws_security_group" "elasticache_security_group" {
+ name_prefix = "elasticache-"
+ description = "ElastiCache security group for PHP session data"
+}
+ 
+resource "aws_elasticache_subnet_group" "elasticache_subnet_group" {
+ name = "my-elasticache-subnet-group"
+ subnet_ids = var.subnet_ids
+}
+ 
+resource "aws_elasticache_cluster" "memcached" {
+ cluster_id           = "my-memcached-cluster"
+ engine               = "memcached"
+ node_type            = "cache.m5.large"  # Choose an appropriate instance type
+ num_cache_nodes      = 1
+ parameter_group_name = "default.memcached1.5"
+ subnet_group_name    = aws_elasticache_subnet_group.elasticache_subnet_group.name
+ security_group_ids   = [aws_security_group.elasticache_security_group.id]
+}
+ 
+# Configure the cache parameter group if needed
+resource "aws_elasticache_parameter_group" "memcached_parameter_group" {
+ name = "my-memcached-parameter-group"
+ family = "memcached1.5"
+ description = "My custom parameter group for Memcached"
+ parameter {
+   name  = "parameter_name"
+   value = "parameter_value"
+ }
+}
+ 
+# Define your security group rules to control inbound/outbound traffic to ElastiCache
+resource "aws_security_group_rule" "elasticache_ingress" {
+ type        = "ingress"
+ from_port   = 11211  # Memcached default port
+ to_port     = 11211
+ protocol    = "tcp"
+ cidr_blocks = ["0.0.0.0/0"]  # Adjust this to limit access as needed
+ security_group_id = aws_security_group.elasticache_security_group.id
+}
+ 
+elasticache/variables.tf (Input Variables)
+variable "subnet_ids" {
+ type    = list(string)
+ description = "List of subnet IDs for the ElastiCache cluster."
+}
+ 
+# Add more variables as needed
+ 
+elasticache/outputs.tf (Output Variables)
+output "memcached_endpoint" {
+ description = "ElastiCache Memcached endpoint for configuring your PHP sessions."
+ value = aws_elasticache_cluster.memcached.configuration_endpoint_address
+}
+ 
+we're creating an Amazon ElastiCache Memcached cluster with one node.
+The security group for the ElastiCache cluster is created and allows traffic on the default Memcached port (11211) from any IP address. Be sure to customize this to match your security requirements.
+ 
+ 
+ 
+Automate SSL:
+To automate the process of obtaining SSL certificates from Let's Encrypt for each WordPress website and ensure automated certificate renewal, you can use the Certbot tool along with the AWS Elastic Load Balancer (ELB) for SSL termination. Certbot will handle the certificate issuance and renewal, and the ELB will handle SSL termination.
+ 
+Create an Elastic Load Balancer (ELB) with SSL termination
+elb/main.tf:
+ 
+provider "aws" {
+ region = "us-west-2"  # Change to your desired region
+}
+ 
+resource "aws_security_group" "elb_sg" {
+ name_prefix        = "elb-"
+ description        = "ELB security group"
+ ingress {
+   from_port   = 443
+   to_port     = 443
+   protocol    = "tcp"
+   cidr_blocks = ["0.0.0.0/0"]  # Adjust this for security
+ }
+}
+ 
+resource "aws_lb" "my_elb" {
+ name               = "my-elb"
+ internal           = false
+ load_balancer_type = "application"
+ enable_deletion_protection = false
+ 
+ enable_http2     = true
+ 
+ security_groups = [aws_security_group.elb_sg.id]
+ subnets         = var.subnet_ids
+ enable_deletion_protection = false
+ 
+ enable_deletion_protection = false
+ enable_http2               = true
+ idle_timeout               = 60
+ enable_cross_zone_load_balancing = false
+ 
+ enable_deletion_protection = false
+ 
+ enable_deletion_protection = false
+ enable_http2               = true
+ idle_timeout               = 60
+ enable_cross_zone_load_balancing = false
+ 
+ tags = {
+   Name = "my-elb"
+ }
+}
+ 
+2. Create a listener for SSL termination on the ELB:
+elb/listeners.tf
+
+resource "aws_lb_listener" "https" {
+ load_balancer_arn = aws_lb.my_elb.arn
+ port              = 443
+ protocol          = "HTTPS"
+ ssl_policy        = "ELBSecurityPolicy-2016-08"
+ 
+ certificate_arn = "arn:aws:acm:us-west-2:123456789012:certificate/your-ssl-certificate-arn"  # Replace with your ACM certificate ARN
+ 
+ default_action {
+   type             = "fixed-response"
+   fixed_response {
+     content_type = "text/plain"
+     status_code  = "200"
+     content      = "OK"
+   }
+ }
+}
+ 
+ 
+Create a route for your WordPress application
+elb/routes.tf
+resource "aws_lb_target_group" "wordpress" {
+ name        = "wordpress-tg"
+ port        = 80
+ protocol    = "HTTP"
+ target_type = "ip"
+ vpc_id      = var.vpc_id
+ 
+ health_check {
+   path = "/health"
+ }
+}
+ 
+resource "aws_lb_listener_rule" "wordpress_rule" {
+ listener_arn = aws_lb_listener.https.arn
+ priority     = 100
+ 
+ action {
+   type             = "fixed-response"
+   fixed_response {
+     content_type = "text/plain"
+     status_code  = "200"
+     content      = "OK"
+   }
+ }
+ 
+ condition {
+   path_pattern {
+     values = ["/wordpress/*"]
+   }
+ }
+}
+ 
+ 
+ 
+Use a provisioner to deploy WordPress with SSL support
+You would set up your WordPress deployment, This is where we'd configure WordPress to use HTTPS and specify the ELB as the SSL termination point.
+ 
+Set up Certbot to obtain and renew Let's Encrypt certificates
+You can set up a user_data script or an AWS Lambda function to run Certbot on your WordPress instances or containers. Certbot can be used to obtain and renew Let's Encrypt certificates automatically.
+Please note that setting up Certbot and Let's Encrypt certificates is a separate process that depends on your specific WordPress deployment method and may require additional scripting and configuration. The above Terraform code focuses on the infrastructure setup with ELB for SSL termination.
+ 
+ 
+RDS:
+To deploy an Amazon RDS instance to host the WordPress databases and implement appropriate security groups, backups, and maintenance settings, you can use Terraform. Here's an example Terraform configuration to set up an RDS instance:
+ 
+rds/main.tf (RDS configuration)
+provider "aws" {
+ region = "us-west-2"  # Change to your desired region
+}
+ 
+resource "aws_db_subnet_group" "rds_subnet_group" {
+ name       = "my-rds-subnet-group"
+ subnet_ids = var.subnet_ids
+ description = "My RDS subnet group"
+}
+ 
+resource "aws_security_group" "rds_sg" {
+ name        = "rds-sg"
+ description = "RDS security group"
+ 
+ ingress {
+   from_port   = 3306
+   to_port     = 3306
+   protocol    = "tcp"
+   cidr_blocks = ["0.0.0.0/0"]  # Adjust this for security
+ }
+}
+ 
+resource "aws_db_instance" "wordpress_db" {
+ allocated_storage    = 20
+ storage_type         = "gp2"
+ engine               = "mysql"
+ engine_version       = "5.7"
+ instance_class       = "db.t2.micro"  # Adjust as needed
+ name                 = "wordpress"
+ username             = var.db_username
+ password             = var.db_password
+ parameter_group_name = "default.mysql5.7"
+ skip_final_snapshot  = true
+ vpc_security_group_ids = [aws_security_group.rds_sg.id]
+ db_subnet_group_name = aws_db_subnet_group.rds_subnet_group.name
+ 
+ backup_retention_period = 7  # Adjust as needed
+ backup_window           = "09:30-10:30"  # Adjust as needed
+ maintenance_window      = "wed:10:00-wed:11:00"  # Adjust as needed
+ 
+ tags = {
+   Name = "wordpress-db"
+ }
+}
+ 
+ 
+rds/variables.tf (Input Variables)
+variable "subnet_ids" {
+ type    = list(string)
+ description = "List of subnet IDs for the RDS instance."
+}
+ 
+variable "db_username" {
+ type        = string
+ description = "Database username for WordPress."
+}
+ 
+variable "db_password" {
+ type        = string
+ description = "Database password for WordPress."
+}
+ 
+# Add more variables as needed
+ 
+rds/outputs.tf (Output Variables)
+output "rds_endpoint" {
+ description = "RDS endpoint for the WordPress database."
+ value       = aws_db_instance.wordpress_db.endpoint
+}
+ 
+Also, make sure to manage sensitive data such as database credentials securely. You might consider using AWS Secrets Manager or AWS Systems Manager Parameter Store to store and retrieve sensitive data.
+ 
+‘
+Suggestions for above infrastructure:
+ 
+Data Encryption: Ensure data at rest and in transit is encrypted. For RDS, enable encryption at rest. For the ELB and other services, use HTTPS to encrypt data in transit.
+ 
+Database Backup: While the RDS instance is set up for backups, also consider enabling automated database snapshots and setting up a retention policy that aligns with your data recovery requirements.
+ 
+IAM Roles: Implement IAM roles for EC2 instances or containers running your WordPress application to access AWS resources securely. Avoid hardcoding AWS credentials within instances.
+ 
+Logging and Monitoring: Implement comprehensive logging and monitoring for all components of your infrastructure. Use AWS CloudWatch for monitoring and set up alarms for important metrics. Enable RDS performance insights for database monitoring.
+ 
+Backup and Disaster Recovery: Beyond RDS backups, consider a broader disaster recovery plan that includes regular data backups to S3 and the ability to restore your environment in case of a catastrophic event.
+ 
+Use Secret Manager or Parameter Score: For storing sensitive data, such as database credentials or API keys, consider using AWS Systems Manager Parameter Store or AWS Secrets Manager for better security and management.
